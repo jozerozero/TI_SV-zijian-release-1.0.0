@@ -458,11 +458,11 @@ class Trainer:
                 expand_utt_idx_in_group = tf.tile(tf.expand_dims(utt_idx_in_group, axis=0), [num_utt_per_batch])
 
                 tf_mask = tf.not_equal(expand_utt_idx_in_group, tf.range(num_utt_per_batch))
-                tf_all_true_mask = tf.tile(tf.constant([True]), [num_utt_per_batch])
+                # tf_all_true_mask = tf.tile(tf.constant([True]), [num_utt_per_batch])
                 centroid = \
                     tf.cond(tf.equal(centroid_idx, spk_id),
                             lambda: tf.reduce_mean(tf.boolean_mask(all_utts_for_spk, tf_mask), 0),
-                            lambda: tf.reduce_mean(tf.boolean_mask(all_utts_for_spk, tf_all_true_mask), 0))
+                            lambda: tf.reduce_mean(all_utts_for_spk, 0))
 
                 return centroid
 
@@ -489,34 +489,38 @@ class Trainer:
             return sim_per_utt
 
         #with tf.variable_scope("loss", reuse=tf.AUTO_REUSE):
-        with tf.variable_scope("loss"):
-            if self.hparams.loss_type == "softmax":
-                # sim_mat has shape of [self.batch_size, num_spk] [640, 64]
-                #sim_mat = tf.convert_to_tensor(tf.map_fn(_create_sim_per_utt, tf.range(self.batch_size), dtype=tf.float32, parallel_iterations=20))
-                with tf.variable_scope("cos_params", reuse=tf.AUTO_REUSE):
-                    w = tf.Variable(10.0, name="scale_weight")
-                    bias = tf.Variable(-5.0, name="scale_bias")
-                    w=tf.clip_by_value(w, 0.0, 1000.0)
 
-                sim_mat_stack = []
-                for i in range(self.batch_size):
-                    sim_mat_stack.append(_create_sim_per_utt(i, w, bias))
-                sim_mat = tf.stack(sim_mat_stack, axis=0)
-                #sim_mat_summary = tf.summary.image("sim_mat", tf.reshape(sim_mat,[1, self.batch_size, self.hparams.num_spk_per_batch, 1]))
-                #eval_sim_mat_summary = tf.summary.image("eval_sim_mat", tf.reshape(sim_mat,[1, self.batch_size, self.hparams.num_spk_per_batch, 1]))
+        with tf.device('/gpu:0'):
+            with tf.variable_scope("loss"):
+                if self.hparams.loss_type == "softmax":
+                    # sim_mat has shape of [self.batch_size, num_spk] [640, 64]
+                    # sim_mat = tf.convert_to_tensor(tf.map_fn(_create_sim_per_utt, tf.range(self.batch_size), dtype=tf.float32, parallel_iterations=20))
+                    with tf.variable_scope("cos_params", reuse=tf.AUTO_REUSE):
+                        w = tf.Variable(10.0, name="scale_weight")
+                        bias = tf.Variable(-5.0, name="scale_bias")
+                        w = tf.clip_by_value(w, 0.0, 1000.0)
 
-                # tf.nn.spase_softmax_cross_entropy_with_logits [640, 64] [640]
-                total_loss = tf.divide(tf.reduce_sum(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=sim_mat, labels=labels)), self.batch_size)
-                #eval_total_loss = tf.divide(tf.reduce_sum(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=sim_mat, labels=labels)), self.batch_size)
-                total_loss_summary = tf.summary.scalar("loss", total_loss)
-                #eval_total_loss_summary = tf.summary.scalar("eval_loss", eval_total_loss)
-                return (total_loss, total_loss_summary)
+                    sim_mat_stack = []
+                    for i in range(self.batch_size):
+                        sim_mat_stack.append(_create_sim_per_utt(i, w, bias))
+                    sim_mat = tf.stack(sim_mat_stack, axis=0)
+                    # sim_mat_summary = tf.summary.image("sim_mat", tf.reshape(sim_mat,[1, self.batch_size, self.hparams.num_spk_per_batch, 1]))
+                    # eval_sim_mat_summary = tf.summary.image("eval_sim_mat", tf.reshape(sim_mat,[1, self.batch_size, self.hparams.num_spk_per_batch, 1]))
 
-            elif self.hparams.loss_type == "contrast":
-                pass
+                    # tf.nn.spase_softmax_cross_entropy_with_logits [640, 64] [640]
+                    total_loss = tf.divide(
+                        tf.reduce_sum(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=sim_mat, labels=labels)),
+                        self.batch_size)
+                    # eval_total_loss = tf.divide(tf.reduce_sum(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=sim_mat, labels=labels)), self.batch_size)
+                    total_loss_summary = tf.summary.scalar("loss", total_loss)
+                    # eval_total_loss_summary = tf.summary.scalar("eval_loss", eval_total_loss)
+                    return (total_loss, total_loss_summary)
 
-            else:
-                print("Loss type not supported")
+                elif self.hparams.loss_type == "contrast":
+                    pass
+
+                else:
+                    print("Loss type not supported")
 
     def _optimize(self, total_loss):
         #with tf.variable_scope("optimize", reuse=tf.AUTO_REUSE):
